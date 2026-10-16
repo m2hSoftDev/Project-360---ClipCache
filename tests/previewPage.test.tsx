@@ -7,7 +7,7 @@ import { ScreenshotItem } from '@/shared/types';
 // Configure act environment for React 18 in jsdom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-describe('PreviewPage Toolbar and Metadata (Phase 3 Requirements)', () => {
+describe('PreviewPage Toolbar and Metadata (Phase 4 Enabled Editor)', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
@@ -83,7 +83,7 @@ describe('PreviewPage Toolbar and Metadata (Phase 3 Requirements)', () => {
       );
     });
 
-    const toolbarSection = container.querySelector('section[aria-label="Preview Toolbar"]');
+    const toolbarSection = container.querySelector('section[aria-label="Editor Toolbar"]');
     expect(toolbarSection).toBeTruthy();
 
     const buttons = Array.from(toolbarSection!.querySelectorAll('button'));
@@ -103,7 +103,7 @@ describe('PreviewPage Toolbar and Metadata (Phase 3 Requirements)', () => {
     expect(buttons.map((b) => b.textContent?.trim())).toEqual(expectedOrder);
   });
 
-  it('disables every toolbar button except Back with tooltip "Coming in Phase 4"', async () => {
+  it('confirms editing tools are operational and no button has "Coming in Phase 4"', async () => {
     const root = createRoot(container);
     await act(async () => {
       root.render(
@@ -115,23 +115,35 @@ describe('PreviewPage Toolbar and Metadata (Phase 3 Requirements)', () => {
       );
     });
 
-    const toolbarSection = container.querySelector('section[aria-label="Preview Toolbar"]')!;
+    const toolbarSection = container.querySelector('section[aria-label="Editor Toolbar"]')!;
     const buttons = Array.from(toolbarSection.querySelectorAll('button'));
 
-    // First 9 buttons: Crop, Blur, Draw, Text, Arrow, Undo, Redo, Reset, Save
-    for (let i = 0; i < 9; i++) {
-      const btn = buttons[i];
-      expect(btn.disabled).toBe(true);
-      expect(btn.getAttribute('title')).toBe('Coming in Phase 4');
+    // Verify NONE of the buttons have the Phase 3 placeholder tooltip
+    for (const btn of buttons) {
+      expect(btn.getAttribute('title')).not.toContain('Coming in Phase 4');
     }
 
-    // 10th button: Back
-    const backBtn = buttons[9];
+    // Interactive tools must be enabled
+    const cropBtn = container.querySelector('[data-testid="preview-toolbar-crop"]') as HTMLButtonElement;
+    const blurBtn = container.querySelector('[data-testid="preview-toolbar-blur"]') as HTMLButtonElement;
+    const drawBtn = container.querySelector('[data-testid="preview-toolbar-draw"]') as HTMLButtonElement;
+    const textBtn = container.querySelector('[data-testid="preview-toolbar-text"]') as HTMLButtonElement;
+    const arrowBtn = container.querySelector('[data-testid="preview-toolbar-arrow"]') as HTMLButtonElement;
+    const resetBtn = container.querySelector('[data-testid="preview-toolbar-reset"]') as HTMLButtonElement;
+    const saveBtn = container.querySelector('[data-testid="preview-toolbar-save"]') as HTMLButtonElement;
+    const backBtn = container.querySelector('[data-testid="preview-toolbar-back"]') as HTMLButtonElement;
+
+    expect(cropBtn.disabled).toBe(false);
+    expect(blurBtn.disabled).toBe(false);
+    expect(drawBtn.disabled).toBe(false);
+    expect(textBtn.disabled).toBe(false);
+    expect(arrowBtn.disabled).toBe(false);
+    expect(resetBtn.disabled).toBe(false);
+    expect(saveBtn.disabled).toBe(false);
     expect(backBtn.disabled).toBe(false);
-    expect(backBtn.textContent?.trim()).toBe('Back');
   });
 
-  it('calls onBack when the Back button is clicked', async () => {
+  it('calls onBack when Back is clicked with no unsaved changes', async () => {
     const onBackMock = vi.fn();
     const root = createRoot(container);
 

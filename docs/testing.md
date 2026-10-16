@@ -130,3 +130,96 @@
    - No 21st item is added to IndexedDB.
    - Deleting one capture decrements quota to `"19 / 20"`, re-enabling capture.
 
+## Phase 4: Editor & Editing Tools
+
+### 1. Canvas Display at Panel Width & ResizeObserver
+1. Open any capture in the Preview page.
+2. Resize the Chrome Side Panel between 320 px and 500 px.
+3. **Expected Outcome**:
+   - Fabric.js canvas dynamically resizes to fit container width via `ResizeObserver`.
+   - The image is scaled proportionally without clipping or horizontal scrollbars.
+   - All annotations, drawings, and tools render scaled to panel view.
+
+### 2. Crop Tool (New Record with `parentId`)
+1. In the editor toolbar, click **"Crop"**.
+2. Click and drag a rectangle over the image. A dashed blue crop selection appears.
+3. The sub-bar prompts: `"Selection ready. Save as new capture?"`.
+4. Click **"Save Crop (New Record)"**.
+5. **Expected Outcome**:
+   - The cropped region is extracted using `src/sidepanel/lib/cropMath.ts`.
+   - Saved as a **new Dexie screenshot record** with `mode: 'area'`, `parentId` set to the original screenshot's ID, and its own `originalBlob`.
+   - The original capture remains completely intact.
+   - A success banner confirms the new capture ID and parent ID.
+
+### 3. Blur Tool (Sensitive Area Obfuscation)
+1. Click **"Blur"** on the editor toolbar.
+2. Click and drag a rectangle over any sensitive text or area.
+3. Release the mouse button.
+4. **Expected Outcome**:
+   - A copy of that region clipped to the rectangle is instantly pixelated (block size 8) for high performance even on 4K/high-res captures.
+   - The blurred region can be selected, moved, or deleted as an object on the canvas.
+   - Undo/Redo tracking records the blur action.
+
+### 4. Draw Tool (Freehand Brush)
+1. Click **"Draw"** on the editor toolbar.
+2. Select a color preset (or choose a custom color via the native color picker).
+3. Adjust the brush size slider (1 px to 30 px).
+4. Draw freehand strokes on the canvas.
+5. **Expected Outcome**:
+   - Smooth freehand drawing appears on the canvas in the selected color and stroke width.
+   - Changing colors or stroke widths updates immediately for subsequent strokes.
+
+### 5. Text Tool
+1. Click **"Text"** on the editor toolbar.
+2. Click anywhere on the image canvas.
+3. **Expected Outcome**:
+   - An editable text box (`IText`) appears with placeholder `"Type text here"`.
+   - Type custom text.
+   - Click the **"Confirm Text"** button on the sub-bar or click outside the text box to finalize.
+   - The text object is selectable, movable, and resizable.
+
+### 6. Arrow Tool
+1. Click **"Arrow"** on the editor toolbar.
+2. Select desired color and size from the sub-bar.
+3. Click and drag across the canvas from start point to destination.
+4. Release the mouse.
+5. **Expected Outcome**:
+   - A straight line with a prominent arrow head oriented along the drag direction is created.
+   - Grouped into a single movable Fabric object.
+
+### 7. Undo and Redo (30-Step History Limit)
+1. Perform a series of edits (e.g. Draw, Arrow, Text, Blur).
+2. Click **"Undo"** repeatedly:
+   - **Expected Outcome**: Canvas reverts step-by-step through prior states.
+   - The Undo button disables when the oldest state is reached.
+3. Click **"Redo"**:
+   - **Expected Outcome**: Canvas steps forward through reverted states.
+4. History is strictly capped at 30 steps in memory and cleared automatically when navigating away or closing the page.
+
+### 8. Reset Tool
+1. Make several edits on the canvas.
+2. Click **"Reset"**.
+3. **Expected Outcome**:
+   - Canvas is restored back to the original image state.
+   - Any previously saved edits in IndexedDB are not deleted.
+
+### 9. Save Tool (Full Natural Resolution Export & DB Update)
+1. Add drawings, text, or arrows to the image.
+2. Note that the **"Save"** button pulses green to indicate unsaved changes.
+3. Click **"Save"**.
+4. **Expected Outcome**:
+   - Canvas is exported to a full-resolution PNG blob at natural pixel size (e.g. 1920 × 1080 px, not the 360 px display size).
+   - Writes `editedBlob`, `editState` (Fabric JSON), and `isEdited = true` to the existing Dexie record.
+   - `originalBlob` remains 100% unchanged.
+   - Unsaved changes indicator turns off.
+   - Returning to the gallery displays the updated thumbnail reactively via `useLiveQuery`.
+
+### 10. Back with Unsaved Changes Confirmation
+1. Add any drawing or text without clicking Save.
+2. Click the **"Back"** button (or header back arrow).
+3. **Expected Outcome**:
+   - A modal dialog appears: `"Discard changes?"`.
+   - Explains that leaving now will lose unsaved edits.
+   - Contains two buttons: **"Keep Editing"** (closes modal, stays in editor) and **"Discard"** (discards edits and navigates back to gallery).
+
+

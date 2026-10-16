@@ -17,10 +17,10 @@ non-obvious, and easy to explain in a viva.
 
 ## Current status
 - Phase 1 (setup, side panel opens from toolbar): DONE.
-- Phase 2 (capture, auto-save, crop, recent tray): MOSTLY DONE.
-  Known issues: thumbnail labels overlap images, grid clips in narrow panel,
-  no full-image preview yet.
-- Phase 3 onward: not started.
+- Phase 2 (capture, auto-save, crop, recent tray): DONE.
+- Phase 3 (gallery, full-size preview, limit, cascade delete): DONE.
+- Phase 4 (editor with Crop, Blur, Draw, Text, Arrow, Undo, Redo, Reset, Save, Back): DONE.
+- Phase 5 onward: not started.
 
 ## Tech stack (do not change without asking)
 - Chrome Extension, Manifest V3

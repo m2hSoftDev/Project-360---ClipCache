@@ -1,32 +1,16 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { ScreenshotItem, CaptureMode } from '@/shared/types';
-import {
-  Crop,
-  Droplet,
-  PenTool,
-  Type,
-  ArrowRight,
-  Undo2,
-  Redo2,
-  RotateCcw,
-  Save,
-  ArrowLeft,
-  Trash2,
-} from 'lucide-react';
-import { calculatePreviewDimensions } from '@/sidepanel/lib/previewMath';
+import { EditorToolbar, EditorTool } from '@/sidepanel/components/EditorToolbar';
+import { EditorCanvas, EditorCanvasHandle } from '@/sidepanel/components/EditorCanvas';
+import { DiscardModal } from '@/sidepanel/components/DiscardModal';
+import { updateScreenshot, addScreenshot } from '@/sidepanel/lib/db';
+import { AlertBanner, AlertType } from '@/sidepanel/components/AlertBanner';
+import { ArrowLeft, Trash2 } from 'lucide-react';
 
 export interface PreviewPageProps {
   capture: ScreenshotItem;
   onBack: () => void;
   onDeleteClick: (capture: ScreenshotItem) => void;
-}
-
-interface ToolbarButtonDef {
-  id: string;
-  label: string;
-  icon: React.ReactNode;
-  disabled: boolean;
-  tooltip: string;
 }
 
 const getModeBadgeClass = (mode: CaptureMode): string => {
@@ -48,135 +32,117 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
   onBack,
   onDeleteClick,
 }) => {
-  const [imageUrl, setImageUrl] = useState<string>('');
-  const [containerWidth, setContainerWidth] = useState<number>(360);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<EditorCanvasHandle>(null);
 
-  // 1. Lifecycle: Create object URL on open, revoke on close per CLAUDE.md Side Panel rule 6
-  useEffect(() => {
-    const blobToDisplay = capture.editedBlob || capture.originalBlob;
-    const url = URL.createObjectURL(blobToDisplay);
-    setImageUrl(url);
+  // Active Tool & Styling
+  const [activeTool, setActiveTool] = useState<EditorTool>(null);
+  const [strokeColor, setStrokeColor] = useState<string>('#ef4444');
+  const [strokeWidth, setStrokeWidth] = useState<number>(4);
 
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [capture]);
+  // History & Unsaved Changes
+  const [canUndo, setCanUndo] = useState<boolean>(false);
+  const [canRedo, setCanRedo] = useState<boolean>(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // 2. ResizeObserver to dynamically read panel / container width per CLAUDE.md layout rules 2 & 3
-  useEffect(() => {
-    if (!containerRef.current) return;
+  // Crop & Text specific state
+  const [hasCropSelection, setHasCropSelection] = useState<boolean>(false);
+  const [isTypingText, setIsTypingText] = useState<boolean>(false);
 
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.contentRect.width > 0) {
-          setContainerWidth(Math.round(entry.contentRect.width));
-        }
-      }
-    });
-
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  // Calculate displayed dimensions to verify scaling math
-  const previewDim = calculatePreviewDimensions(
-    { width: capture.width, height: capture.height },
-    containerWidth
-  );
+  // Modals & Alerts
+  const [isDiscardOpen, setIsDiscardOpen] = useState<boolean>(false);
+  const [alert, setAlert] = useState<{ type: AlertType; message: string } | null>(null);
 
   const formattedCreatedTime = new Date(capture.createdAt).toLocaleString(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
   });
 
-  // 3. Toolbar buttons in EXACT order per CLAUDE.md Phase 3:
-  // Crop, Blur, Draw, Text, Arrow, Undo, Redo, Reset, Save, Back.
-  // In Phase 3, every button except Back is disabled with tooltip "Coming in Phase 4".
-  const toolbarButtons: ToolbarButtonDef[] = [
-    {
-      id: 'crop',
-      label: 'Crop',
-      icon: <Crop className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'blur',
-      label: 'Blur',
-      icon: <Droplet className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'draw',
-      label: 'Draw',
-      icon: <PenTool className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'text',
-      label: 'Text',
-      icon: <Type className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'arrow',
-      label: 'Arrow',
-      icon: <ArrowRight className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'undo',
-      label: 'Undo',
-      icon: <Undo2 className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'redo',
-      label: 'Redo',
-      icon: <Redo2 className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'reset',
-      label: 'Reset',
-      icon: <RotateCcw className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'save',
-      label: 'Save',
-      icon: <Save className="w-3.5 h-3.5" />,
-      disabled: true,
-      tooltip: 'Coming in Phase 4',
-    },
-    {
-      id: 'back',
-      label: 'Back',
-      icon: <ArrowLeft className="w-3.5 h-3.5" />,
-      disabled: false,
-      tooltip: 'Back to gallery',
-    },
-  ];
+  // 1. Save: exports canvas at natural size, writes to same Dexie record, leaves originalBlob unchanged
+  const handleSave = async () => {
+    if (!capture.id || !canvasRef.current || isSaving) return;
+    setIsSaving(true);
+    setAlert(null);
+
+    try {
+      const { blob: editedBlob, editState } = await canvasRef.current.save();
+      await updateScreenshot(capture.id, {
+        editedBlob,
+        editState,
+        isEdited: true,
+      });
+
+      setHasUnsavedChanges(false);
+      setAlert({
+        type: 'success',
+        message: 'Edits saved successfully at full natural resolution!',
+      });
+    } catch (err) {
+      setAlert({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to save edits.',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // 2. Crop: saves cropped area as a NEW record with parentId set to original
+  const handleApplyCrop = async () => {
+    if (!capture.id || !canvasRef.current) return;
+    try {
+      const cropRect = canvasRef.current.getActiveCropRect();
+      const croppedBlob = await canvasRef.current.applyCrop();
+      if (!croppedBlob || !cropRect) return;
+
+      const newCropItem: Omit<ScreenshotItem, 'id'> = {
+        createdAt: Date.now(),
+        sourceUrl: capture.sourceUrl,
+        pageTitle: `${capture.pageTitle || 'Capture'} (Crop)`,
+        mode: 'area',
+        originalBlob: croppedBlob,
+        editedBlob: null,
+        editState: null,
+        width: cropRect.width,
+        height: cropRect.height,
+        isEdited: false,
+        parentId: capture.id,
+      };
+
+      const newId = await addScreenshot(newCropItem);
+      setActiveTool(null);
+      setAlert({
+        type: 'success',
+        message: `Cropped area saved as new screenshot #${newId} with parentId ${capture.id}!`,
+      });
+    } catch (err) {
+      setAlert({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to crop image.',
+      });
+    }
+  };
+
+  // 3. Back: prompts if unsaved changes exist
+  const handleBack = () => {
+    if (hasUnsavedChanges) {
+      setIsDiscardOpen(true);
+    } else {
+      onBack();
+    }
+  };
 
   return (
     <div
       data-testid="preview-page"
       className="flex flex-col min-h-screen bg-slate-950 text-slate-100 selection:bg-brand-500 selection:text-white"
     >
-      {/* Top Metadata Header: Title, mode, size, and created time above the image */}
-      <header className="px-3.5 py-3 bg-slate-900 border-b border-slate-800 flex flex-col gap-2">
+      {/* Top Header: Title, mode, size, and created time above the image */}
+      <header className="px-3.5 py-3 bg-slate-900 border-b border-slate-800 flex flex-col gap-2 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <button
-              onClick={onBack}
+              onClick={handleBack}
               title="Back to gallery"
               aria-label="Back to gallery"
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
@@ -192,7 +158,6 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
             </h2>
           </div>
 
-          {/* Delete button on Preview page */}
           <button
             onClick={() => onDeleteClick(capture)}
             title="Delete this capture"
@@ -205,7 +170,7 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
           </button>
         </div>
 
-        {/* Metadata Bar: Mode, Size, Created Time */}
+        {/* Metadata Bar */}
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-slate-400">
           <span
             data-testid="preview-mode"
@@ -228,61 +193,68 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
         </div>
       </header>
 
-      {/* Preview Toolbar (Editing tools shown but disabled per Phase 3) */}
-      <section
-        aria-label="Preview Toolbar"
-        className="px-2 py-1.5 bg-slate-900/90 border-b border-slate-800/80 overflow-x-auto no-scrollbar flex items-center gap-1"
-      >
-        {toolbarButtons.map((btn) => (
-          <button
-            key={btn.id}
-            onClick={btn.id === 'back' ? onBack : undefined}
-            disabled={btn.disabled}
-            title={btn.tooltip}
-            aria-label={btn.label}
-            data-testid={`preview-toolbar-${btn.id}`}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-all shrink-0 ${
-              btn.disabled
-                ? 'opacity-40 cursor-not-allowed bg-slate-900/40 text-slate-500 border border-transparent'
-                : 'bg-brand-600 hover:bg-brand-500 text-white shadow-sm cursor-pointer border border-brand-500/40 active:scale-95'
-            }`}
-          >
-            {btn.icon}
-            <span className="text-[11px]">{btn.label}</span>
-          </button>
-        ))}
-      </section>
+      {/* Preview / Editor Toolbar (Phase 4: all tools enabled in exact order) */}
+      <EditorToolbar
+        activeTool={activeTool}
+        onSelectTool={setActiveTool}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        isSaving={isSaving}
+        hasUnsavedChanges={hasUnsavedChanges}
+        onUndo={() => canvasRef.current?.undo()}
+        onRedo={() => canvasRef.current?.redo()}
+        onReset={() => canvasRef.current?.reset()}
+        onSave={() => void handleSave()}
+        onBack={handleBack}
+        strokeColor={strokeColor}
+        onChangeColor={setStrokeColor}
+        strokeWidth={strokeWidth}
+        onChangeStrokeWidth={setStrokeWidth}
+        hasActiveCropSelection={hasCropSelection}
+        onApplyCrop={() => void handleApplyCrop()}
+        onCancelCrop={() => canvasRef.current?.cancelCrop()}
+        isTypingText={isTypingText}
+        onConfirmText={() => canvasRef.current?.confirmText()}
+      />
 
-      {/* ResizeObserver Info Bar */}
-      <div className="px-3.5 py-1 bg-slate-950/80 border-b border-slate-900 flex items-center justify-between text-[10px] text-slate-500 font-mono">
-        <span>
-          Viewport: {previewDim.displayWidth} × {previewDim.displayHeight} px
-        </span>
-        <span>Scale: {(previewDim.scale * 100).toFixed(0)}%</span>
-      </div>
-
-      {/* Scaled Image in scrollable container: never clipped per CLAUDE.md layout rule 2 */}
-      <main
-        ref={containerRef}
-        data-testid="preview-image-container"
-        className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col items-center justify-start bg-slate-950"
-      >
-        {imageUrl ? (
-          <img
-            src={imageUrl}
-            alt={capture.pageTitle || 'Capture full preview'}
-            data-testid="preview-image"
-            className="max-w-full h-auto block mx-auto object-contain rounded-lg border border-slate-800/80 shadow-2xl transition-all"
-            style={{
-              maxHeight: 'none', // Image is allowed to expand down in scrollable area
-            }}
+      {/* Alerts */}
+      {alert && (
+        <div className="p-3">
+          <AlertBanner
+            type={alert.type}
+            message={alert.message}
+            onDismiss={() => setAlert(null)}
           />
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-slate-600 text-xs">
-            Loading preview image...
-          </div>
-        )}
+        </div>
+      )}
+
+      {/* Fabric.js Canvas Area */}
+      <main className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col items-center justify-start bg-slate-950">
+        <EditorCanvas
+          ref={canvasRef}
+          capture={capture}
+          activeTool={activeTool}
+          strokeColor={strokeColor}
+          strokeWidth={strokeWidth}
+          onHistoryChange={(undoable, redoable, unsaved) => {
+            setCanUndo(undoable);
+            setCanRedo(redoable);
+            setHasUnsavedChanges(unsaved);
+          }}
+          onCropSelectionChange={setHasCropSelection}
+          onTypingTextChange={setIsTypingText}
+        />
       </main>
+
+      {/* Discard Changes Confirmation Modal */}
+      <DiscardModal
+        isOpen={isDiscardOpen}
+        onDiscard={() => {
+          setIsDiscardOpen(false);
+          onBack();
+        }}
+        onKeepEditing={() => setIsDiscardOpen(false)}
+      />
     </div>
   );
 };
