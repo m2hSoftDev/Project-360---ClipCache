@@ -16,6 +16,7 @@ export interface ScreenshotItem {
   width: number;
   height: number;
   isEdited: boolean;
+  parentId?: number | null;
 }
 
 export interface SettingItem {

@@ -40,4 +40,13 @@ export default defineManifest({
     '48': 'icons/icon48.png',
     '128': 'icons/icon128.png',
   },
+  commands: {
+    capture_visible: {
+      suggested_key: {
+        default: 'Alt+Shift+S',
+        mac: 'Alt+Shift+S',
+      },
+      description: 'Capture visible tab without picker',
+    },
+  },
 });
