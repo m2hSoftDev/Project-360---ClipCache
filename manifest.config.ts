@@ -41,12 +41,12 @@ export default defineManifest({
     '128': 'icons/icon128.png',
   },
   commands: {
-    capture_visible: {
+    'capture-visible-v2': {
       suggested_key: {
         default: 'Alt+Shift+S',
-        mac: 'Alt+Shift+S',
+        mac: 'Command+Shift+S',
       },
-      description: 'Capture visible tab without picker',
+      description: 'Capture visible tab',
     },
   },
 });

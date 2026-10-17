@@ -3,13 +3,21 @@
 ## Phase 2: Capture, Tray, Area Crop & Full Preview
 
 ### 1. Shortcut Capture via `Alt+Shift+S` (`captureVisibleTab` with no picker)
-1. Navigate to any regular web page (e.g. `https://example.com`).
-2. Press the global extension shortcut <kbd>Alt+Shift+S</kbd> (or click **"Capture Visible Tab"** in the Side Panel).
-3. **Expected Outcome**:
-   - The visible tab is captured immediately using `chrome.tabs.captureVisibleTab`.
-   - **No browser picker or permission prompt appears.**
-   - The screenshot auto-saves to Dexie with `mode: 'visible'` and `parentId: null`.
-   - The captured image appears in the Recent Captures tray.
+1. **Service Worker Console Check**:
+   - Open `chrome://extensions` in developer mode, find ClipCache, and click "service worker" to open DevTools.
+   - Run `chrome.commands.getAll().then(console.log)` in the console.
+   - **Expected Outcome**: The output must list exactly one command, `capture-visible-v2`, with shortcut `"Alt+Shift+S"` (or `"Command+Shift+S"` on Mac). Stale commands (`capture_visible`, `_execute_action`, `area-capture`) must NOT appear.
+2. **Stale Shortcut Immunity Check**:
+   - Navigate to any regular web page (e.g. `https://example.com`).
+   - Press <kbd>Alt+C</kbd> and <kbd>Alt+Shift+C</kbd>.
+   - **Expected Outcome**: Confirm that **nothing happens** — no capture is taken, no error is thrown, and no image is added to the tray.
+3. **Capture via Official Shortcut**:
+   - On the web page, press the global extension shortcut <kbd>Alt+Shift+S</kbd> (or click **"Capture Visible Tab"** in the Side Panel).
+   - **Expected Outcome**:
+     - The visible tab is captured immediately using `chrome.tabs.captureVisibleTab`.
+     - **No browser picker or permission prompt appears.**
+     - The screenshot auto-saves to Dexie with `mode: 'visible'` and `parentId: null`.
+     - The captured image appears in the Recent Captures tray.
 
 ### 2. Restricted Pages Error Handling
 1. Navigate to `chrome://extensions` or the Chrome Web Store.
@@ -221,5 +229,29 @@
    - A modal dialog appears: `"Discard changes?"`.
    - Explains that leaving now will lose unsaved edits.
    - Contains two buttons: **"Keep Editing"** (closes modal, stays in editor) and **"Discard"** (discards edits and navigates back to gallery).
+
+### 11. Editor Bug Fixes Manual Verification
+1. **Bug 1 (Export Screenshot with Edits)**:
+   - Open a capture in the editor.
+   - Draw a box (or rectangle annotation) on the screenshot.
+   - Click **"Save"**.
+   - Open the saved image (or inspect the saved thumbnail/preview in the gallery) and confirm the saved image shows the screenshot with the box (not just the drawing on a blank background).
+2. **Bug 2 (Arrow Head Tip Alignment)**:
+   - Click **"Arrow"** on the toolbar.
+   - Draw an arrow from `(100, 100)` towards `(300, 200)` and release the mouse.
+   - Confirm that the arrow head tip is located precisely at the drag end point and moves together with the line as a single group.
+3. **Bug 3 (Undo / Redo Shortcuts)**:
+   - Add an object to the canvas (e.g. draw a stroke, arrow, or shape).
+   - Press <kbd>Ctrl+Z</kbd> (or <kbd>Cmd+Z</kbd> on Mac).
+   - Confirm the object immediately disappears.
+   - Press <kbd>Ctrl+Y</kbd> or <kbd>Ctrl+Shift+Z</kbd> (or <kbd>Cmd+Shift+Z</kbd> on Mac).
+   - Confirm the object reappears.
+   - While editing text inside a text box, confirm <kbd>Ctrl+Z</kbd> does not unexpectedly delete canvas objects.
+4. **Bug 4 (Delete / Backspace Key Removal)**:
+   - Click to select an object or multiple objects on the canvas.
+   - Press <kbd>Delete</kbd> or <kbd>Backspace</kbd>.
+   - Confirm the selected object disappears from the canvas, and the screenshot itself is NOT deleted from storage.
+   - Press <kbd>Ctrl+Z</kbd> (or <kbd>Cmd+Z</kbd>) and confirm the deleted object returns.
+   - While editing text inside a text box, confirm <kbd>Delete</kbd> and <kbd>Backspace</kbd> edit text normally without removing the text box object.
 
 

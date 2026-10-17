@@ -113,4 +113,45 @@ describe('EditorHistory Undo/Redo Manager (CLAUDE.md Phase 4)', () => {
     expect(history.canRedo).toBe(false);
     expect(history.current).toBeNull();
   });
+
+  it('undo after adding one object removes it, and undo after delete restores it', async () => {
+    const { fabric } = await import('fabric');
+    const el = document.createElement('canvas');
+    const canvas = new fabric.Canvas(el, { width: 300, height: 200 });
+    const history = new EditorHistory(30);
+
+    // Initial blank canvas state
+    history.push(JSON.stringify(canvas.toJSON()));
+    expect(canvas.getObjects()).toHaveLength(0);
+
+    // 1. Add one object
+    const rect = new fabric.Rect({ left: 10, top: 10, width: 50, height: 50 });
+    canvas.add(rect);
+    history.push(JSON.stringify(canvas.toJSON()));
+    expect(canvas.getObjects()).toHaveLength(1);
+
+    // 2. Undo after adding one object removes it
+    const undoState1 = history.undo()!;
+    await new Promise<void>((resolve) => canvas.loadFromJSON(undoState1, () => resolve()));
+    expect(canvas.getObjects()).toHaveLength(0);
+
+    // Redo restores the added object
+    const redoState1 = history.redo()!;
+    await new Promise<void>((resolve) => canvas.loadFromJSON(redoState1, () => resolve()));
+    expect(canvas.getObjects()).toHaveLength(1);
+
+    // 3. Delete the object
+    const objToDelete = canvas.getObjects()[0];
+    canvas.remove(objToDelete);
+    history.push(JSON.stringify(canvas.toJSON()));
+    expect(canvas.getObjects()).toHaveLength(0);
+
+    // 4. Undo after delete restores it
+    const undoState2 = history.undo()!;
+    await new Promise<void>((resolve) => canvas.loadFromJSON(undoState2, () => resolve()));
+    expect(canvas.getObjects()).toHaveLength(1);
+
+    canvas.dispose();
+  });
 });
+

@@ -23,13 +23,11 @@ import {
   getAllScreenshots,
   deleteScreenshot,
   getScreenshotCount,
-  getShortcuts,
   getLinkedChildrenCount,
 } from '@/sidepanel/lib/db';
 import { checkCaptureLimit, FREE_PLAN_LIMIT } from '@/background/limits';
 import { ScreenshotItem, CaptureMode } from '@/shared/types';
 import { AlertBanner, AlertType } from '@/sidepanel/components/AlertBanner';
-import { ShortcutModal } from '@/sidepanel/components/ShortcutModal';
 import { AreaCropOverlay } from '@/sidepanel/components/AreaCropOverlay';
 import { GalleryGrid } from '@/sidepanel/components/GalleryGrid';
 import { PreviewPage } from '@/sidepanel/pages/PreviewPage';
@@ -70,17 +68,51 @@ export const CapturePage: React.FC = () => {
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Shortcut configuration (default Alt+Shift+S per CLAUDE.md)
-  const [shortcutModalOpen, setShortcutModalOpen] = useState<boolean>(false);
-  const [activeShortcut, setActiveShortcut] = useState<string>('Alt+Shift+S');
+  // Active shortcut loaded directly from chrome.commands.getAll() for 'capture-visible-v2'
+  const [activeShortcut, setActiveShortcut] = useState<string>('');
 
-  // Load preferred shortcuts from Dexie settings on mount
   useEffect(() => {
-    void getShortcuts().then((res) => {
-      if (res.screenCapture) {
-        setActiveShortcut(res.screenCapture);
+    let isMounted = true;
+    const fetchShortcut = () => {
+      try {
+        if (typeof chrome !== 'undefined' && chrome.commands?.getAll) {
+          chrome.commands.getAll((commands) => {
+            if (!isMounted) return;
+            const cmd = commands?.find((c) => c.name === 'capture-visible-v2');
+            if (cmd && cmd.shortcut) {
+              setActiveShortcut(cmd.shortcut);
+            } else {
+              setActiveShortcut('Not set. Set it at chrome://extensions/shortcuts');
+            }
+          });
+        } else {
+          if (isMounted) setActiveShortcut('Not set. Set it at chrome://extensions/shortcuts');
+        }
+      } catch {
+        if (isMounted) setActiveShortcut('Not set. Set it at chrome://extensions/shortcuts');
       }
-    });
+    };
+
+    fetchShortcut();
+
+    const onFocus = () => fetchShortcut();
+    const onVisibilityChange = () => {
+      if (!document.hidden) fetchShortcut();
+    };
+
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('mouseenter', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    const interval = setInterval(fetchShortcut, 1000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('mouseenter', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      clearInterval(interval);
+    };
   }, []);
 
   // Core save helper conforming to CLAUDE.md schema
@@ -175,8 +207,10 @@ export const CapturePage: React.FC = () => {
       }
     };
 
-    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
-    return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+    if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+      chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+      return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+    }
   }, []);
 
   // 2. Clipboard Paste Handler
@@ -252,27 +286,6 @@ export const CapturePage: React.FC = () => {
     return () => window.removeEventListener('paste', handleGlobalPaste);
   }, [handleProcessBlob]);
 
-  // Global Shortcut Listener (Alt+Shift+S) inside Side Panel
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (['INPUT', 'TEXTAREA'].includes(target?.tagName) || target?.isContentEditable) {
-        return;
-      }
-
-      if (shortcutModalOpen || isCapturing) return;
-
-      // Handle default Alt+Shift+S or custom shortcut
-      const isAltShiftS = e.altKey && e.shiftKey && (e.key.toUpperCase() === 'S' || e.code === 'KeyS');
-      if (isAltShiftS) {
-        e.preventDefault();
-        void handleVisibleTabCapture();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [shortcutModalOpen, isCapturing, handleVisibleTabCapture]);
 
   // 3. File Drag-and-Drop Handlers strictly limited to PNG, JPG, and WebP
   const handleDragOver = (e: React.DragEvent) => {
@@ -387,10 +400,11 @@ export const CapturePage: React.FC = () => {
 
   // Preview Page View per CLAUDE.md Phase 3
   if (previewTarget) {
+    const activeCapture = captures.find((c) => c.id === previewTarget.id) || previewTarget;
     return (
       <>
         <PreviewPage
-          capture={previewTarget}
+          capture={activeCapture}
           onBack={() => setPreviewTarget(null)}
           onDeleteClick={(cap) => void promptDelete(cap)}
         />
@@ -430,12 +444,19 @@ export const CapturePage: React.FC = () => {
         {/* Quota Badge & Shortcut Settings */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShortcutModalOpen(true)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-all shadow-sm"
-            title="Configure capture shortcut"
+            onClick={() => {
+              if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
+                chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+              }
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-all shadow-sm cursor-pointer"
+            title="Configure capture shortcut at chrome://extensions/shortcuts"
+            data-testid="shortcut-badge"
           >
             <Keyboard className="w-3.5 h-3.5 text-brand-400" />
-            <span className="font-mono text-[11px] font-semibold">{activeShortcut}</span>
+            <span className="font-mono text-[11px] font-semibold" data-testid="shortcut-label">
+              {activeShortcut}
+            </span>
           </button>
 
           {/* Show the free-plan count as "X / 20" at the top per CLAUDE.md Phase 3 */}
@@ -505,7 +526,10 @@ export const CapturePage: React.FC = () => {
                   <h2 className="text-sm font-bold text-white group-hover:text-brand-300 transition-colors">
                     {isCapturing ? 'Capturing...' : 'Capture Visible Tab'}
                   </h2>
-                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                  <span
+                    data-testid="card-shortcut-label"
+                    className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-300 border border-brand-500/30"
+                  >
                     {activeShortcut}
                   </span>
                 </div>
@@ -600,19 +624,6 @@ export const CapturePage: React.FC = () => {
         isDeleting={isDeleting}
       />
 
-      {/* Shortcut Configuration Modal */}
-      <ShortcutModal
-        isOpen={shortcutModalOpen}
-        onClose={() => setShortcutModalOpen(false)}
-        currentShortcut={activeShortcut}
-        onShortcutSaved={(newShortcut) => {
-          setActiveShortcut(newShortcut);
-          setAlert({
-            type: 'success',
-            message: `Keyboard shortcut updated to ${newShortcut}!`,
-          });
-        }}
-      />
 
       {/* Footer */}
       <footer className="mt-auto pt-3 border-t border-slate-800/80 text-center flex items-center justify-between text-[11px] text-slate-500">

@@ -106,4 +106,52 @@ describe('Editor Canvas Export Size & Scaling Tests (CLAUDE.md Phase 4)', () => 
       )
     ).toBe(true);
   });
+
+  it('export: output dimensions equal natural width and height, and image pixels include original background', async () => {
+    const { fabric } = await import('fabric');
+    const { exportCompositeImage } = await import('@/sidepanel/lib/exportMath');
+
+    // 1. Create a 100x100 solid-red fixture canvas
+    const fixtureCanvas = document.createElement('canvas');
+    fixtureCanvas.width = 100;
+    fixtureCanvas.height = 100;
+    const fixtureCtx = fixtureCanvas.getContext('2d')!;
+    fixtureCtx.fillStyle = '#ff0000';
+    fixtureCtx.fillRect(0, 0, 100, 100);
+
+    const fixtureBlob = await new Promise<Blob>((resolve) => {
+      fixtureCanvas.toBlob((b) => resolve(b!), 'image/png');
+    });
+
+    // 2. Create Fabric canvas and add an annotation
+    const fabricCanvasEl = document.createElement('canvas');
+    fabricCanvasEl.width = 100;
+    fabricCanvasEl.height = 100;
+    const fabricCanvas = new fabric.Canvas(fabricCanvasEl, { width: 100, height: 100 });
+    const rect = new fabric.Rect({ left: 10, top: 10, width: 20, height: 20, fill: 'blue' });
+    fabricCanvas.add(rect);
+
+    // 3. Composite original fixture blob with Fabric annotations
+    const exportedBlob = await exportCompositeImage(fixtureBlob, fabricCanvas, 100, 100);
+
+    // 4. Assert exported blob dimensions equal natural width and height
+    expect((exportedBlob as unknown as { width: number }).width).toBe(100);
+    expect((exportedBlob as unknown as { height: number }).height).toBe(100);
+
+    // 5. Assert background pixel (at 80, 80 where no annotation was placed) is red and not transparent
+    const testCanvas = document.createElement('canvas');
+    testCanvas.width = 100;
+    testCanvas.height = 100;
+    const testCtx = testCanvas.getContext('2d')!;
+    const pixelData = (exportedBlob as unknown as { _pixelData?: Uint8ClampedArray })._pixelData;
+    if (pixelData) {
+      (testCanvas as unknown as { _pixelData: Uint8ClampedArray })._pixelData = pixelData;
+    }
+    const bgPixel = testCtx.getImageData(80, 80, 1, 1).data;
+    expect(bgPixel[0]).toBe(255); // Red channel
+    expect(bgPixel[3]).toBe(255); // Alpha channel is 255 (not transparent)
+
+    fabricCanvas.dispose();
+  });
 });
+

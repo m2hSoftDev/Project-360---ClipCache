@@ -2,20 +2,22 @@ import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 're
 import { fabric } from 'fabric';
 import { ScreenshotItem } from '@/shared/types';
 import { EditorTool } from './EditorToolbar';
-import { computeCanvasLayout } from '@/sidepanel/lib/exportMath';
+import { computeCanvasLayout, exportCompositeImage } from '@/sidepanel/lib/exportMath';
 import { EditorHistory } from '@/sidepanel/lib/editorHistory';
 import { cropBlobToBlob, Rect } from '@/sidepanel/lib/cropMath';
-import { dataUrlToBlob } from '@/background/capture';
+import { createArrowObjects, computeArrowAngle } from '@/sidepanel/lib/arrowMath';
+import { createBlurredRegionDataUrl, createBlurFabricObject } from '@/sidepanel/lib/blurMath';
 
 export interface EditorCanvasHandle {
   undo: () => void;
   redo: () => void;
   reset: () => void;
-  save: () => Promise<{ blob: Blob; editState: string }>;
+  save: () => Promise<{ blob: Blob; editState: string | null }>;
   applyCrop: () => Promise<Blob | null>;
   cancelCrop: () => void;
   confirmText: () => void;
   getActiveCropRect: () => Rect | null;
+  deleteSelected: () => void;
 }
 
 export interface EditorCanvasProps {
@@ -79,22 +81,36 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
       rect: null,
     });
 
-    // 1. Manage image URL lifecycle
+    const sourceImageRef = useRef<HTMLImageElement | null>(null);
+
+    // 1. Manage image URL lifecycle: derived from editedBlob (if finalized) or originalBlob
     useEffect(() => {
-      const blob = capture.editedBlob || capture.originalBlob;
-      const url = URL.createObjectURL(blob);
+      const sourceBlob = capture.editedBlob || capture.originalBlob;
+      const url = URL.createObjectURL(sourceBlob);
       setImageUrl(url);
+
+      const img = new Image();
+      img.onload = () => {
+        sourceImageRef.current = img;
+      };
+      img.src = url;
 
       return () => {
         URL.revokeObjectURL(url);
       };
-    }, [capture]);
+    }, [capture.id, capture.editedBlob, capture.originalBlob]);
 
-    // Push canvas state to history
+    const serializeCanvasState = (canvas: fabric.Canvas): string => {
+      const json = canvas.toJSON() as Record<string, unknown>;
+      delete json.backgroundImage;
+      delete json.background;
+      return JSON.stringify(json);
+    };
+
+    // Push canvas state to history without dead blob URLs
     const recordHistory = () => {
       if (isApplyingHistoryRef.current || !fabricCanvasRef.current) return;
-      const json = JSON.stringify(fabricCanvasRef.current.toJSON());
-      historyRef.current.push(json);
+      historyRef.current.push(serializeCanvasState(fabricCanvasRef.current));
       onHistoryChange(
         historyRef.current.canUndo,
         historyRef.current.canRedo,
@@ -122,31 +138,65 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
       canvas.setZoom(layout.scale);
       fabricCanvasRef.current = canvas;
 
-      // Load existing editState or set initial image background
-      if (capture.editState) {
-        try {
-          isApplyingHistoryRef.current = true;
-          canvas.loadFromJSON(capture.editState, () => {
+      const applyBackgroundImage = (callback?: () => void) => {
+        fabric.Image.fromURL(imageUrl, (bgImg) => {
+          if (!fabricCanvasRef.current || !bgImg) {
+            if (callback) callback();
+            return;
+          }
+          bgImg.set({
+            left: 0,
+            top: 0,
+            originX: 'left',
+            originY: 'top',
+            selectable: false,
+            evented: false,
+          });
+          canvas.setBackgroundImage(bgImg, () => {
             canvas.renderAll();
-            isApplyingHistoryRef.current = false;
+            if (callback) callback();
+          });
+        });
+      };
+
+      // Load existing editState and always ensure the original screenshot is loaded as background
+      if (capture.editState) {
+        let parsed: any = null;
+        try {
+          parsed =
+            typeof capture.editState === 'string'
+              ? JSON.parse(capture.editState)
+              : capture.editState;
+          if (parsed && typeof parsed === 'object') {
+            delete parsed.backgroundImage;
+            delete parsed.background;
+          }
+        } catch {
+          parsed = null;
+        }
+
+        if (parsed) {
+          isApplyingHistoryRef.current = true;
+          canvas.loadFromJSON(parsed, () => {
+            applyBackgroundImage(() => {
+              isApplyingHistoryRef.current = false;
+              canvas.renderAll();
+              historyRef.current.clear();
+              historyRef.current.push(serializeCanvasState(canvas));
+              onHistoryChange(false, false, false);
+            });
+          });
+        } else {
+          applyBackgroundImage(() => {
             historyRef.current.clear();
-            historyRef.current.push(JSON.stringify(canvas.toJSON()));
+            historyRef.current.push(serializeCanvasState(canvas));
             onHistoryChange(false, false, false);
           });
-        } catch {
-          loadBackground();
         }
       } else {
-        loadBackground();
-      }
-
-      function loadBackground() {
-        fabric.Image.fromURL(imageUrl, (bgImg) => {
-          if (!fabricCanvasRef.current) return;
-          bgImg.set({ selectable: false, evented: false });
-          canvas.setBackgroundImage(bgImg, canvas.renderAll.bind(canvas));
+        applyBackgroundImage(() => {
           historyRef.current.clear();
-          historyRef.current.push(JSON.stringify(canvas.toJSON()));
+          historyRef.current.push(serializeCanvasState(canvas));
           onHistoryChange(false, false, false);
         });
       }
@@ -226,7 +276,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
       const handleMouseDown = (opt: fabric.IEvent) => {
         const pointer = canvas.getPointer(opt.e);
 
-        // A. Arrow Tool
+        // A. Arrow Tool (Bug 2: Head placed at pointer end with originX center, originY top)
         if (activeTool === 'arrow') {
           canvas.selection = false;
           arrowDragRef.current.isDrawing = true;
@@ -240,18 +290,21 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
               strokeWidth: strokeWidth / canvas.getZoom(),
               selectable: false,
               evented: false,
+              strokeLineCap: 'round',
             }
           );
           (line as unknown as { isTempHelper: boolean }).isTempHelper = true;
 
+          const headSize = Math.max((strokeWidth * 3) / canvas.getZoom(), 12 / canvas.getZoom());
           const head = new fabric.Triangle({
             left: pointer.x,
             top: pointer.y,
             originX: 'center',
-            originY: 'center',
-            width: (strokeWidth * 3) / canvas.getZoom(),
-            height: (strokeWidth * 3) / canvas.getZoom(),
+            originY: 'top',
+            width: headSize,
+            height: headSize,
             fill: strokeColor,
+            angle: 0,
             selectable: false,
             evented: false,
           });
@@ -340,10 +393,22 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
         if (activeTool === 'arrow' && arrowDragRef.current.isDrawing) {
           const { startX, startY, line, head } = arrowDragRef.current;
           if (line && head) {
-            line.set({ x2: pointer.x, y2: pointer.y });
             const dx = pointer.x - startX;
             const dy = pointer.y - startY;
-            const angle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+            const dist = Math.hypot(dx, dy) || 1;
+            const ux = dx / dist;
+            const uy = dy / dist;
+            const zoom = canvas.getZoom() || 1;
+            const headSize = Math.max((strokeWidth * 3) / zoom, 16 / zoom);
+            const lineEndDist = Math.min(dist * 0.8, headSize * 0.7);
+
+            line.set({
+              x1: startX,
+              y1: startY,
+              x2: pointer.x - ux * lineEndDist,
+              y2: pointer.y - uy * lineEndDist,
+            });
+            const angle = computeArrowAngle({ x: startX, y: startY }, { x: pointer.x, y: pointer.y });
             head.set({ left: pointer.x, top: pointer.y, angle });
             canvas.renderAll();
           }
@@ -378,21 +443,29 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
         }
       };
 
-      const handleMouseUp = () => {
-        // Arrow finalize
+      const handleMouseUp = (opt: fabric.IEvent) => {
+        const pointer = canvas.getPointer(opt.e);
+
+        // Arrow finalize: create unified group with head tip at drag end point
         if (activeTool === 'arrow' && arrowDragRef.current.isDrawing) {
           arrowDragRef.current.isDrawing = false;
-          const { line, head } = arrowDragRef.current;
+          const { startX, startY, line, head } = arrowDragRef.current;
           if (line && head) {
             canvas.remove(line, head);
-            // Create united group so it acts as a single shape
-            const arrowGroup = new fabric.Group([line, head], {
-              selectable: true,
-            });
-            canvas.add(arrowGroup);
-            canvas.setActiveObject(arrowGroup);
-            canvas.renderAll();
-            recordHistory();
+            const dist = Math.hypot(pointer.x - startX, pointer.y - startY);
+            if (dist > 5) {
+              const { group } = createArrowObjects(
+                { x: startX, y: startY },
+                { x: pointer.x, y: pointer.y },
+                strokeColor,
+                strokeWidth,
+                canvas.getZoom()
+              );
+              canvas.add(group);
+              canvas.setActiveObject(group);
+              canvas.renderAll();
+              recordHistory();
+            }
           }
         }
 
@@ -402,34 +475,31 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
           const tempRect = blurDragRef.current.rect;
           if (tempRect) {
             canvas.remove(tempRect);
-            const left = tempRect.left || 0;
-            const top = tempRect.top || 0;
-            const width = tempRect.width || 0;
-            const height = tempRect.height || 0;
+            const left = Math.round(tempRect.left || 0);
+            const top = Math.round(tempRect.top || 0);
+            const width = Math.round(tempRect.width || 0);
+            const height = Math.round(tempRect.height || 0);
 
             if (width >= 8 && height >= 8) {
-              // Apply region pixelate filter for fast, robust blurring
-              fabric.Image.fromURL(imageUrl, (regionImg) => {
-                regionImg.set({
-                  left,
-                  top,
-                  cropX: left,
-                  cropY: top,
-                  width,
-                  height,
-                  selectable: true,
-                });
-                // Pixelate filter is instantaneous on large images
-                const pixelateFilter = new fabric.Image.filters.Pixelate({
-                  blocksize: 8,
-                });
-                regionImg.filters = [pixelateFilter];
-                regionImg.applyFilters();
-                canvas.add(regionImg);
-                canvas.setActiveObject(regionImg);
-                canvas.renderAll();
-                recordHistory();
-              });
+              const bgElement = (canvas.backgroundImage as fabric.Image)?.getElement() as
+                | HTMLImageElement
+                | undefined;
+              const sourceImg = sourceImageRef.current || bgElement;
+
+              if (sourceImg) {
+                const rect = { x: left, y: top, width, height };
+                const dataUrl = createBlurredRegionDataUrl(sourceImg, rect);
+                if (dataUrl) {
+                  createBlurFabricObject(dataUrl, rect)
+                    .then((blurObj) => {
+                      canvas.add(blurObj);
+                      canvas.setActiveObject(blurObj);
+                      canvas.renderAll();
+                      recordHistory();
+                    })
+                    .catch(() => {});
+                }
+              }
             }
           }
         }
@@ -454,49 +524,208 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
       };
     }, [activeTool, strokeColor, strokeWidth, imageUrl]);
 
+    const executeUndo = () => {
+      const state = historyRef.current.undo();
+      if (state && fabricCanvasRef.current) {
+        const canvas = fabricCanvasRef.current;
+        isApplyingHistoryRef.current = true;
+        canvas.loadFromJSON(state, () => {
+          fabric.Image.fromURL(imageUrl, (bgImg) => {
+            if (fabricCanvasRef.current && bgImg) {
+              bgImg.set({
+                left: 0,
+                top: 0,
+                originX: 'left',
+                originY: 'top',
+                selectable: false,
+                evented: false,
+              });
+              canvas.setBackgroundImage(bgImg, () => {
+                canvas.renderAll();
+                isApplyingHistoryRef.current = false;
+                onHistoryChange(
+                  historyRef.current.canUndo,
+                  historyRef.current.canRedo,
+                  true
+                );
+              });
+            } else {
+              canvas.renderAll();
+              isApplyingHistoryRef.current = false;
+              onHistoryChange(
+                historyRef.current.canUndo,
+                historyRef.current.canRedo,
+                true
+              );
+            }
+          });
+        });
+      }
+    };
+
+    const executeRedo = () => {
+      const state = historyRef.current.redo();
+      if (state && fabricCanvasRef.current) {
+        const canvas = fabricCanvasRef.current;
+        isApplyingHistoryRef.current = true;
+        canvas.loadFromJSON(state, () => {
+          fabric.Image.fromURL(imageUrl, (bgImg) => {
+            if (fabricCanvasRef.current && bgImg) {
+              bgImg.set({
+                left: 0,
+                top: 0,
+                originX: 'left',
+                originY: 'top',
+                selectable: false,
+                evented: false,
+              });
+              canvas.setBackgroundImage(bgImg, () => {
+                canvas.renderAll();
+                isApplyingHistoryRef.current = false;
+                onHistoryChange(
+                  historyRef.current.canUndo,
+                  historyRef.current.canRedo,
+                  true
+                );
+              });
+            } else {
+              canvas.renderAll();
+              isApplyingHistoryRef.current = false;
+              onHistoryChange(
+                historyRef.current.canUndo,
+                historyRef.current.canRedo,
+                true
+              );
+            }
+          });
+        });
+      }
+    };
+
+    const deleteSelected = () => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+      const activeObj = canvas.getActiveObject();
+      if (!activeObj) return;
+
+      // Bug 4: Ignore if text is currently being edited
+      const isTextEditing =
+        (activeObj instanceof fabric.IText && activeObj.isEditing) ||
+        (activeObj as unknown as { isEditing?: boolean })?.isEditing;
+      if (isTextEditing) return;
+
+      if (activeObj instanceof fabric.ActiveSelection) {
+        activeObj.forEachObject((obj) => {
+          canvas.remove(obj);
+        });
+        canvas.discardActiveObject();
+      } else {
+        canvas.remove(activeObj);
+        canvas.discardActiveObject();
+      }
+      canvas.renderAll();
+      // Note: canvas.remove triggers 'object:removed', which calls recordHistory()
+    };
+
+    // Keyboard Shortcuts (Bug 3: Ctrl+Z/Cmd+Z, Ctrl+Y/Redo, Bug 4: Delete key)
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        const activeObj = canvas.getActiveObject();
+        const isTextEditing =
+          (activeObj instanceof fabric.IText && activeObj.isEditing) ||
+          (activeObj as unknown as { isEditing?: boolean })?.isEditing;
+
+        // Bug 4: Delete / Backspace removes active object (ignore when editing text so typing works)
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (!isTextEditing && activeObj) {
+            e.preventDefault();
+            deleteSelected();
+          }
+          return;
+        }
+
+        // Bug 3: Ignore undo/redo keys while a text box is in edit mode
+        if (isTextEditing) {
+          return;
+        }
+
+        const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+
+        // Undo: Ctrl+Z or Cmd+Z (without Shift)
+        if (isCtrlOrMeta && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+          e.preventDefault();
+          executeUndo();
+          return;
+        }
+
+        // Redo: Ctrl+Y, Cmd+Y, or Ctrl+Shift+Z, Cmd+Shift+Z
+        const isRedoKey =
+          (isCtrlOrMeta && (e.key === 'y' || e.key === 'Y')) ||
+          (isCtrlOrMeta && e.shiftKey && (e.key === 'z' || e.key === 'Z'));
+
+        if (isRedoKey) {
+          e.preventDefault();
+          executeRedo();
+          return;
+        }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }, []);
+
     // Imperative methods exposed via ref
     useImperativeHandle(ref, () => ({
-      undo: () => {
-        const state = historyRef.current.undo();
-        if (state && fabricCanvasRef.current) {
-          isApplyingHistoryRef.current = true;
-          fabricCanvasRef.current.loadFromJSON(state, () => {
-            fabricCanvasRef.current?.renderAll();
-            isApplyingHistoryRef.current = false;
-            onHistoryChange(
-              historyRef.current.canUndo,
-              historyRef.current.canRedo,
-              true
-            );
-          });
-        }
-      },
-      redo: () => {
-        const state = historyRef.current.redo();
-        if (state && fabricCanvasRef.current) {
-          isApplyingHistoryRef.current = true;
-          fabricCanvasRef.current.loadFromJSON(state, () => {
-            fabricCanvasRef.current?.renderAll();
-            isApplyingHistoryRef.current = false;
-            onHistoryChange(
-              historyRef.current.canUndo,
-              historyRef.current.canRedo,
-              true
-            );
-          });
-        }
-      },
+      undo: executeUndo,
+      redo: executeRedo,
+      deleteSelected,
       reset: () => {
-        if (!fabricCanvasRef.current || !imageUrl) return;
-        fabricCanvasRef.current.clear();
-        fabric.Image.fromURL(imageUrl, (bgImg) => {
-          if (!fabricCanvasRef.current) return;
-          bgImg.set({ selectable: false, evented: false });
-          fabricCanvasRef.current.setBackgroundImage(
-            bgImg,
-            fabricCanvasRef.current.renderAll.bind(fabricCanvasRef.current)
-          );
-          recordHistory();
+        if (!fabricCanvasRef.current) return;
+        const canvas = fabricCanvasRef.current;
+
+        // Clear all active annotations
+        const objects = canvas.getObjects().slice();
+        objects.forEach((obj) => canvas.remove(obj));
+
+        // Revert background to original unmodified capture (capture.originalBlob)
+        const origUrl = URL.createObjectURL(capture.originalBlob);
+        fabric.Image.fromURL(origUrl, (bgImg) => {
+          if (!fabricCanvasRef.current || !bgImg) return;
+          bgImg.set({
+            left: 0,
+            top: 0,
+            originX: 'left',
+            originY: 'top',
+            selectable: false,
+            evented: false,
+          });
+          canvas.setBackgroundImage(bgImg, () => {
+            canvas.renderAll();
+            URL.revokeObjectURL(origUrl);
+          });
+          const origImg = new Image();
+          origImg.onload = () => {
+            sourceImageRef.current = origImg;
+          };
+          origImg.src = origUrl;
+
+          historyRef.current.clear();
+          onHistoryChange(false, false, false);
         });
       },
       save: async () => {
@@ -505,20 +734,60 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(
         }
 
         const canvas = fabricCanvasRef.current;
-        const zoom = canvas.getZoom() || 1;
-        const multiplier = 1 / zoom;
 
-        // Export at full natural resolution
-        const dataUrl = canvas.toDataURL({
-          format: 'png',
-          multiplier,
+        // Discard any active selection so selection handles are removed from the export and screen
+        canvas.discardActiveObject();
+
+        const baseBlob = capture.editedBlob || capture.originalBlob;
+
+        // Offscreen composite export containing base image at natural size + Fabric annotations
+        const blob = await exportCompositeImage(
+          baseBlob,
+          canvas,
+          capture.width,
+          capture.height
+        );
+
+        // Make the final output fully static and finalized:
+        // Clear all active annotation objects from the canvas since they are baked into the image
+        const objects = canvas.getObjects().slice();
+        objects.forEach((obj) => {
+          canvas.remove(obj);
         });
 
-        const blob = dataUrlToBlob(dataUrl);
-        const editState = JSON.stringify(canvas.toJSON());
-        onHistoryChange(historyRef.current.canUndo, historyRef.current.canRedo, false);
+        // Set the newly finalized composite blob as the static background
+        const finalizedUrl = URL.createObjectURL(blob);
+        await new Promise<void>((resolve) => {
+          fabric.Image.fromURL(finalizedUrl, (bgImg) => {
+            if (fabricCanvasRef.current && bgImg) {
+              bgImg.set({
+                left: 0,
+                top: 0,
+                originX: 'left',
+                originY: 'top',
+                selectable: false,
+                evented: false,
+              });
+              canvas.setBackgroundImage(bgImg, () => {
+                canvas.renderAll();
+                resolve();
+              });
+            } else {
+              resolve();
+            }
+          });
+        });
 
-        return { blob, editState };
+        const finalizedImg = new Image();
+        finalizedImg.onload = () => {
+          sourceImageRef.current = finalizedImg;
+        };
+        finalizedImg.src = finalizedUrl;
+
+        historyRef.current.clear();
+        onHistoryChange(false, false, false);
+
+        return { blob, editState: null };
       },
       applyCrop: async () => {
         if (!cropRectShapeRef.current) return null;

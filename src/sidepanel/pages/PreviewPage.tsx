@@ -72,6 +72,7 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
         isEdited: true,
       });
 
+      setActiveTool(null);
       setHasUnsavedChanges(false);
       setAlert({
         type: 'success',
@@ -84,6 +85,25 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // 2. Reset: restores canvas to original unmodified capture and clears edited record in Dexie if edited
+  const handleReset = async () => {
+    if (!canvasRef.current) return;
+    canvasRef.current.reset();
+    setActiveTool(null);
+    setHasUnsavedChanges(false);
+    if (capture.isEdited && capture.id) {
+      await updateScreenshot(capture.id, {
+        editedBlob: null,
+        editState: null,
+        isEdited: false,
+      });
+      setAlert({
+        type: 'info',
+        message: 'Reverted back to original unmodified capture.',
+      });
     }
   };
 
@@ -203,7 +223,7 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
         hasUnsavedChanges={hasUnsavedChanges}
         onUndo={() => canvasRef.current?.undo()}
         onRedo={() => canvasRef.current?.redo()}
-        onReset={() => canvasRef.current?.reset()}
+        onReset={() => void handleReset()}
         onSave={() => void handleSave()}
         onBack={handleBack}
         strokeColor={strokeColor}

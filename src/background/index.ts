@@ -30,36 +30,39 @@ chrome.runtime.onInstalled.addListener(() => {
 void configureSidePanel();
 
 /**
- * Global Keyboard Shortcut Listener (Alt+Shift+S)
- * Captures the visible tab with no picker, auto-saves to Dexie, and opens/notifies the side panel.
+ * Global Keyboard Shortcut Listener
+ * Synchronously registered at top level.
+ * Handles only 'capture-visible-v2' and ignores every other command.
  */
 chrome.commands.onCommand.addListener(async (command) => {
   logger.info(`Received command: ${command}`);
 
-  if (command === 'capture_visible') {
-    const result = await captureVisibleTabAction();
+  if (command !== 'capture-visible-v2') {
+    return;
+  }
 
-    // Broadcast result to active extension pages / sidepanel
-    try {
-      await chrome.runtime.sendMessage({
-        type: 'CAPTURE_RESPONSE',
-        success: result.success,
-        screenshotId: result.screenshotId,
-        error: result.error,
-      });
-    } catch {
-      // Side panel might be closed; opening it below
-    }
+  const result = await captureVisibleTabAction();
 
-    // Ensure side panel is opened
-    try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (activeTab?.windowId && chrome.sidePanel?.open) {
-        await chrome.sidePanel.open({ windowId: activeTab.windowId });
-      }
-    } catch (panelError) {
-      logger.warn('Could not auto-open side panel', panelError);
+  // Broadcast result to active extension pages / sidepanel
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'CAPTURE_RESPONSE',
+      success: result.success,
+      screenshotId: result.screenshotId,
+      error: result.error,
+    });
+  } catch {
+    // Side panel might be closed; opening it below
+  }
+
+  // Ensure side panel is opened
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab?.windowId && chrome.sidePanel?.open) {
+      await chrome.sidePanel.open({ windowId: activeTab.windowId });
     }
+  } catch (panelError) {
+    logger.warn('Could not auto-open side panel', panelError);
   }
 });
 
