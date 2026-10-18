@@ -21,7 +21,8 @@ non-obvious, and easy to explain in a viva.
 - Phase 3 (gallery, full-size preview, limit, cascade delete): DONE.
 - Phase 4 (editor with Crop, Blur, Draw, Text, Arrow, Undo, Redo, Reset, Save, Back, plus composite export, arrow tip alignment, undo/redo shortcuts, and delete key fixes): DONE.
 - Shortcuts: the only capture shortcut is the Chrome command "capture-visible-v2", default Alt+Shift+S, changed only at chrome://extensions/shortcuts.
-- Phase 5 onward: not started.
+- Phase 5 (compare view with before/after slider, PNG/JPG download to local disk with JPG white background, and PNG clipboard copy): DONE.
+- Phase 6 onward: not started.
 
 ## Tech stack (do not change without asking)
 - Chrome Extension, Manifest V3
