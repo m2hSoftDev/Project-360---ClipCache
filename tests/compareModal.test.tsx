@@ -142,8 +142,18 @@ describe('Phase 5 Compare View Tests (CLAUDE.md Phase 5)', () => {
     expect(rangeInput).toBeTruthy();
     expect(rangeInput.value).toBe('50');
 
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set;
+
     await act(async () => {
-      rangeInput.value = '75';
+      if (nativeSetter) {
+        nativeSetter.call(rangeInput, '75');
+      } else {
+        rangeInput.value = '75';
+      }
+      rangeInput.dispatchEvent(new Event('input', { bubbles: true }));
       rangeInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
