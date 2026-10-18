@@ -118,6 +118,13 @@ if (typeof HTMLCanvasElement !== 'undefined') {
         if (c === '#ff0000' || c === 'red') [r, g, b, a] = [255, 0, 0, 255];
         else if (c === '#00ff00' || c === 'green') [r, g, b, a] = [0, 255, 0, 255];
         else if (c === '#0000ff' || c === 'blue') [r, g, b, a] = [0, 0, 255, 255];
+        else if (c === '#ffffff' || c === 'white') [r, g, b, a] = [255, 255, 255, 255];
+        else if (c.startsWith('#') && c.length === 7) {
+          r = parseInt(c.slice(1, 3), 16) || 0;
+          g = parseInt(c.slice(3, 5), 16) || 0;
+          b = parseInt(c.slice(5, 7), 16) || 0;
+          a = 255;
+        }
       }
       for (let row = Math.max(0, y); row < Math.min(this.canvas.height, y + h); row++) {
         for (let col = Math.max(0, x); col < Math.min(this.canvas.width, x + w); col++) {

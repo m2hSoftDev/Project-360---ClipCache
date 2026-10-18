@@ -5,7 +5,14 @@ import { EditorCanvas, EditorCanvasHandle } from '@/sidepanel/components/EditorC
 import { DiscardModal } from '@/sidepanel/components/DiscardModal';
 import { updateScreenshot, addScreenshot } from '@/sidepanel/lib/db';
 import { AlertBanner, AlertType } from '@/sidepanel/components/AlertBanner';
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { ArrowLeft, Trash2, GitCompare, Download, Copy } from 'lucide-react';
+import { CompareModal } from '@/sidepanel/components/CompareModal';
+import {
+  getExportSourceBlob,
+  convertBlobToJpg,
+  downloadBlob,
+  copyBlobToClipboard,
+} from '@/sidepanel/lib/exportUtils';
 
 export interface PreviewPageProps {
   capture: ScreenshotItem;
@@ -51,12 +58,73 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
 
   // Modals & Alerts
   const [isDiscardOpen, setIsDiscardOpen] = useState<boolean>(false);
+  const [isCompareOpen, setIsCompareOpen] = useState<boolean>(false);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
   const [alert, setAlert] = useState<{ type: AlertType; message: string } | null>(null);
 
   const formattedCreatedTime = new Date(capture.createdAt).toLocaleString(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
   });
+
+  // Export handlers (Phase 5): Download PNG/JPG, Copy to Clipboard
+  const handleDownload = async (format: 'png' | 'jpg') => {
+    setIsExporting(true);
+    setAlert(null);
+    try {
+      const sourceBlob = getExportSourceBlob(capture);
+      const safeTitle = (capture.pageTitle || 'screenshot')
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 30);
+      const filename = `${safeTitle}-${capture.id || Date.now()}.${format}`;
+
+      if (format === 'jpg') {
+        const jpgBlob = await convertBlobToJpg(sourceBlob);
+        downloadBlob(jpgBlob, filename);
+      } else {
+        downloadBlob(sourceBlob, filename);
+      }
+
+      setAlert({
+        type: 'success',
+        message: `Saved ${format.toUpperCase()} to local disk successfully!`,
+      });
+    } catch (err) {
+      setAlert({
+        type: 'error',
+        message: err instanceof Error ? err.message : `Failed to export ${format.toUpperCase()}.`,
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleCopyClipboard = async () => {
+    setIsExporting(true);
+    setAlert(null);
+    try {
+      const sourceBlob = getExportSourceBlob(capture);
+      const res = await copyBlobToClipboard(sourceBlob);
+      if (res.success) {
+        setAlert({
+          type: 'success',
+          message: 'Copied PNG screenshot to clipboard!',
+        });
+      } else {
+        setAlert({
+          type: 'error',
+          message: res.error || 'Failed to copy to clipboard.',
+        });
+      }
+    } catch (err) {
+      setAlert({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Clipboard write failed.',
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   // 1. Save: exports canvas at natural size, writes to same Dexie record, leaves originalBlob unchanged
   const handleSave = async () => {
@@ -211,6 +279,86 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
             {formattedCreatedTime}
           </span>
         </div>
+
+        {/* Phase 5 Action Bar: Compare View & Local Storage Export */}
+        <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-slate-800/80">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              onClick={() => {
+                if (!capture.editedBlob) {
+                  setAlert({
+                    type: 'info',
+                    message: 'No edits yet. Edit and save first.',
+                  });
+                  return;
+                }
+                setIsCompareOpen(true);
+              }}
+              disabled={!capture.editedBlob}
+              data-testid="preview-compare-button"
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold transition-colors shrink-0 ${
+                capture.editedBlob
+                  ? 'bg-purple-600 hover:bg-purple-500 text-white cursor-pointer shadow-sm'
+                  : 'bg-slate-800/80 text-slate-500 opacity-60 cursor-not-allowed'
+              }`}
+              title={
+                capture.editedBlob
+                  ? 'Compare original vs edited version'
+                  : 'No edits yet. Edit and save first.'
+              }
+            >
+              <GitCompare className="w-3.5 h-3.5" />
+              <span>Compare</span>
+            </button>
+
+            {!capture.editedBlob && (
+              <span
+                data-testid="compare-no-edits-hint"
+                className="text-[10px] text-slate-500 truncate"
+              >
+                No edits yet. Edit and save first.
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => void handleDownload('png')}
+              disabled={isExporting}
+              data-testid="preview-export-png"
+              aria-label="Download PNG"
+              title="Download PNG to local disk (edited if available, otherwise original)"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-[11px] font-medium transition-colors cursor-pointer"
+            >
+              <Download className="w-3 h-3 text-slate-400" />
+              <span>PNG</span>
+            </button>
+
+            <button
+              onClick={() => void handleDownload('jpg')}
+              disabled={isExporting}
+              data-testid="preview-export-jpg"
+              aria-label="Download JPG"
+              title="Download JPG to local disk with white background"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-[11px] font-medium transition-colors cursor-pointer"
+            >
+              <Download className="w-3 h-3 text-slate-400" />
+              <span>JPG</span>
+            </button>
+
+            <button
+              onClick={() => void handleCopyClipboard()}
+              disabled={isExporting}
+              data-testid="preview-export-copy"
+              aria-label="Copy to Clipboard"
+              title="Copy PNG blob to clipboard"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-[11px] font-medium transition-colors cursor-pointer"
+            >
+              <Copy className="w-3 h-3 text-slate-400" />
+              <span>Copy</span>
+            </button>
+          </div>
+        </div>
       </header>
 
       {/* Preview / Editor Toolbar (Phase 4: all tools enabled in exact order) */}
@@ -274,6 +422,17 @@ export const PreviewPage: React.FC<PreviewPageProps> = ({
           onBack();
         }}
         onKeepEditing={() => setIsDiscardOpen(false)}
+      />
+
+      {/* Compare Modal (Phase 5) */}
+      <CompareModal
+        isOpen={isCompareOpen}
+        onClose={() => setIsCompareOpen(false)}
+        originalBlob={capture.originalBlob}
+        editedBlob={capture.editedBlob}
+        pageTitle={capture.pageTitle}
+        width={capture.width}
+        height={capture.height}
       />
     </div>
   );
