@@ -254,4 +254,56 @@
    - Press <kbd>Ctrl+Z</kbd> (or <kbd>Cmd+Z</kbd>) and confirm the deleted object returns.
    - While editing text inside a text box, confirm <kbd>Delete</kbd> and <kbd>Backspace</kbd> edit text normally without removing the text box object.
 
+## Phase 5: Compare View & Export Options
 
+### 1. Compare View with Draggable Before/After Slider
+1. **Unedited Capture State**:
+   - Open a fresh screenshot that has no edits saved (`editedBlob` is null).
+   - In the action bar above the toolbar, check the **"Compare"** button.
+   - **Expected Outcome**:
+     - The Compare button is disabled (`opacity-60 cursor-not-allowed`).
+     - A hint text appears next to it: `"No edits yet. Edit and save first."`.
+     - Hover tooltip displays: `"No edits yet. Edit and save first."`.
+2. **Edited Capture State**:
+   - Use the editor toolbar to add annotations (e.g. Draw, Text, Blur, or Arrow).
+   - Click **"Save"** to store `editedBlob`.
+   - **Expected Outcome**:
+     - The **"Compare"** button is now enabled (purple button with active state).
+     - Hint text disappears.
+3. **Draggable Slider Interaction**:
+   - Click the **"Compare"** button.
+   - A modal dialog opens showing the before/after comparison.
+   - **Expected Outcome**:
+     - Draggable divider line starts at 50%.
+     - Left side displays the **Original** capture (`originalBlob`).
+     - Right side displays the **Edited** capture (`editedBlob`).
+     - Drag the center handle left and right: the divider moves smoothly, updating the percentage and revealing more of either the original or edited version.
+     - The image scales to the Side Panel container width (tested at 360 px) and is never clipped.
+     - Clicking the **X** button closes the compare view cleanly.
+
+### 2. Export to Local Disk (PNG & JPG)
+1. **Format Choice (Edited vs Original)**:
+   - On an edited capture, click **"PNG"**.
+   - **Expected Outcome**:
+     - The browser downloads the edited version of the screenshot (`editedBlob`) to local disk/storage.
+     - A success alert confirms: `"Saved PNG to local disk successfully!"`.
+   - On an unedited capture, click **"PNG"**.
+   - **Expected Outcome**:
+     - The browser downloads the original version (`originalBlob`).
+2. **JPG Export with Solid White Background**:
+   - Open a capture with transparent areas (or crop/shape).
+   - Click **"JPG"**.
+   - **Expected Outcome**:
+     - The image is converted to `image/jpeg` with all transparent regions filled with a solid white background (`#ffffff`).
+     - Downloaded to local disk with `.jpg` file extension.
+     - Success alert confirms: `"Saved JPG to local disk successfully!"`.
+
+### 3. Copy PNG to Clipboard
+1. Click the **"Copy"** button on the action bar.
+2. **Expected Outcome**:
+   - The screenshot (edited version if available, otherwise original) is copied to the clipboard as an `image/png` blob via `navigator.clipboard.write`.
+   - A success banner confirms: `"Copied PNG screenshot to clipboard!"`.
+   - Open any graphics program or chat (e.g. Discord, Slack, Paint) and press <kbd>Ctrl+V</kbd> to paste the full-resolution PNG image.
+3. **Error Reporting**:
+   - If clipboard permissions are blocked by the browser, a clear error banner alerts the user:
+     `"Clipboard access blocked: [details]. Please ensure clipboard permissions are enabled."`

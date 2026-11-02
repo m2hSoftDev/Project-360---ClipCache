@@ -188,4 +188,85 @@ describe('PreviewPage Toolbar and Metadata (Phase 4 Enabled Editor)', () => {
 
     expect(global.URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-preview-url');
   });
+
+  it('Phase 5: Compare button is disabled with "No edits yet. Edit and save first." when editedBlob is null', async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <PreviewPage
+          capture={dummyCapture}
+          onBack={vi.fn()}
+          onDeleteClick={vi.fn()}
+        />
+      );
+    });
+
+    const compareBtn = container.querySelector('[data-testid="preview-compare-button"]') as HTMLButtonElement;
+    expect(compareBtn).toBeTruthy();
+    expect(compareBtn.disabled).toBe(true);
+    expect(compareBtn.getAttribute('title')).toContain('No edits yet. Edit and save first.');
+
+    const hint = container.querySelector('[data-testid="compare-no-edits-hint"]');
+    expect(hint?.textContent).toContain('No edits yet. Edit and save first.');
+  });
+
+  it('Phase 5: Compare button is enabled when editedBlob exists and opens CompareModal', async () => {
+    const editedCapture: ScreenshotItem = {
+      ...dummyCapture,
+      editedBlob: new Blob(['edited-data'], { type: 'image/png' }),
+      isEdited: true,
+    };
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <PreviewPage
+          capture={editedCapture}
+          onBack={vi.fn()}
+          onDeleteClick={vi.fn()}
+        />
+      );
+    });
+
+    const compareBtn = container.querySelector('[data-testid="preview-compare-button"]') as HTMLButtonElement;
+    expect(compareBtn).toBeTruthy();
+    expect(compareBtn.disabled).toBe(false);
+
+    // Modal initially closed
+    expect(container.querySelector('[data-testid="compare-modal"]')).toBeNull();
+
+    // Click Compare button
+    await act(async () => {
+      compareBtn.click();
+    });
+
+    // Modal is now open with slider
+    expect(container.querySelector('[data-testid="compare-modal"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="compare-slider-container"]')).toBeTruthy();
+  });
+
+  it('Phase 5: Export buttons (PNG, JPG, Copy) are rendered in Preview header', async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <PreviewPage
+          capture={dummyCapture}
+          onBack={vi.fn()}
+          onDeleteClick={vi.fn()}
+        />
+      );
+    });
+
+    const pngBtn = container.querySelector('[data-testid="preview-export-png"]') as HTMLButtonElement;
+    const jpgBtn = container.querySelector('[data-testid="preview-export-jpg"]') as HTMLButtonElement;
+    const copyBtn = container.querySelector('[data-testid="preview-export-copy"]') as HTMLButtonElement;
+
+    expect(pngBtn).toBeTruthy();
+    expect(jpgBtn).toBeTruthy();
+    expect(copyBtn).toBeTruthy();
+    expect(pngBtn.disabled).toBe(false);
+    expect(jpgBtn.disabled).toBe(false);
+    expect(copyBtn.disabled).toBe(false);
+  });
 });
+
