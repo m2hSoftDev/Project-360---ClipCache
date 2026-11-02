@@ -18,8 +18,10 @@ non-obvious, and easy to explain in a viva.
 ## Current status
 - Phase 1 (setup, side panel opens from toolbar): DONE.
 - Phase 2 (capture, auto-save, crop, recent tray): DONE.
-- Phase 3 (Gallery, Preview page with disabled Phase 4 editing toolbar, cascade delete, 20-item free limit enforcement): DONE.
-- Phase 4 onward: not started.
+- Phase 3 (gallery, full-size preview, limit, cascade delete): DONE.
+- Phase 4 (editor with Crop, Blur, Draw, Text, Arrow, Undo, Redo, Reset, Save, Back, plus composite export, arrow tip alignment, undo/redo shortcuts, and delete key fixes): DONE.
+- Shortcuts: the only capture shortcut is the Chrome command "capture-visible-v2", default Alt+Shift+S, changed only at chrome://extensions/shortcuts.
+- Phase 5 onward: not started.
 
 ## Tech stack (do not change without asking)
 - Chrome Extension, Manifest V3
